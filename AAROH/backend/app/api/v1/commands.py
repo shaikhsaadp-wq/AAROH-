@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter
 
 from app.core import store
+from app.core.store import DataConflict
 from app.core.logging import get_logger
 from app.providers.mock import mock_provider
 from app.schemas.schemas import CommandRequest, CommandResponse
@@ -46,7 +47,12 @@ async def send_command(payload: CommandRequest) -> CommandResponse:
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
-    saved = store.insert("command_log", record)
+    try:
+        saved = store.insert("command_log", record)
+    except DataConflict as exc:
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     return CommandResponse(
         id=saved["id"],

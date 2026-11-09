@@ -13,6 +13,7 @@ from fastapi.responses import JSONResponse
 
 from app.api.router import api_router
 from app.core.config import settings
+from app.core.database import dispose_engine, initialize_database
 from app.core.logging import get_logger
 
 logger = get_logger(__name__)
@@ -21,7 +22,11 @@ logger = get_logger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     logger.info("AAROH AI backend starting — provider: %s", settings.primary_ai_provider)
-    yield
+    initialize_database()
+    try:
+        yield
+    finally:
+        dispose_engine()
     logger.info("AAROH AI backend shutting down")
 
 
@@ -53,7 +58,7 @@ async def global_exception_handler(request: Request, exc: Exception) -> JSONResp
     logger.error("Unhandled exception on %s %s: %s", request.method, request.url.path, exc)
     return JSONResponse(
         status_code=500,
-        content={"error": "Internal server error", "detail": str(exc)},
+        content={"error": "Internal server error", "detail": "An unexpected server error occurred"},
     )
 
 # ─── Routes ──────────────────────────────────────────────────────────────────

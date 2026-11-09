@@ -6,6 +6,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, status
 
 from app.core import store
+from app.core.store import DataConflict
 from app.core.logging import get_logger
 from app.schemas.schemas import DepartmentCreate, DepartmentResponse, MessageResponse
 
@@ -31,7 +32,10 @@ async def get_department(department_id: str) -> DepartmentResponse:
 @router.post("", response_model=DepartmentResponse, status_code=status.HTTP_201_CREATED)
 async def create_department(payload: DepartmentCreate) -> DepartmentResponse:
     """Create a new department."""
-    dept = store.insert("departments", payload.model_dump())
+    try:
+        dept = store.insert("departments", payload.model_dump())
+    except DataConflict as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     logger.info("Created department: %s", payload.name)
     return dept
 
@@ -39,7 +43,10 @@ async def create_department(payload: DepartmentCreate) -> DepartmentResponse:
 @router.delete("/{department_id}", response_model=MessageResponse)
 async def delete_department(department_id: str) -> MessageResponse:
     """Delete a department."""
-    if not store.delete("departments", department_id):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Department '{department_id}' not found")
+    try:
+        if not store.delete("departments", department_id):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Department '{department_id}' not found")
+    except DataConflict as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     return MessageResponse(message=f"Department '{department_id}' deleted")
 

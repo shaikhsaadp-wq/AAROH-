@@ -26,8 +26,12 @@ class Settings(BaseSettings):
     debug: bool = True
 
     # Server
-    host: str = "0.0.0.0"
+    host: str = "127.0.0.1"
     port: int = 8000
+
+    # Optional SQLAlchemy URL. When unset, SQLite is stored in the user's
+    # local application-data directory (never in the source tree).
+    database_url: str | None = None
 
     # CORS — origins allowed to call the API
     cors_origins: list[str] = [

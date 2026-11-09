@@ -1,56 +1,77 @@
-// AAROH AI — Root Application Component
-
-import { useEffect } from 'react'
-import { OfficeScene } from './components/office/OfficeScene'
-import { TopBar } from './components/ui/TopBar'
+import { lazy, Suspense, useEffect } from 'react'
+import type { CSSProperties } from 'react'
 import { AgentPanel } from './components/ui/AgentPanel'
-import { DepartmentPanel } from './components/ui/DepartmentPanel'
 import { CommandPanel } from './components/ui/CommandPanel'
+import { DepartmentPanel } from './components/ui/DepartmentPanel'
 import { NotificationToast } from './components/ui/NotificationToast'
+import { TopBar } from './components/ui/TopBar'
 import { useStore } from './store/useStore'
 
-export default function App() {
-  const { loadAll, selectedAgentId, selectedDepartmentId } = useStore()
+const OfficeScene = lazy(() => import('./components/office/OfficeScene').then((module) => ({ default: module.OfficeScene })))
 
-  useEffect(() => {
-    loadAll()
-    const interval = setInterval(loadAll, 30_000) // Poll every 30s
-    return () => clearInterval(interval)
-  }, [loadAll])
+function DepartmentDock() {
+  const { departments, selectedDepartmentId, selectDepartment, agents } = useStore()
 
   return (
-    <div style={{ width: '100vw', height: '100vh', overflow: 'hidden', background: '#0f0f1a', position: 'relative' }}>
-      {/* 3D Office Canvas — fills the entire viewport */}
-      <div style={{ position: 'absolute', inset: 0 }}>
-        <OfficeScene />
+    <nav className="department-dock" aria-label="Office departments">
+      <div className="department-dock__heading">
+        <span>Office map</span>
+        <small>{departments.length} departments</small>
       </div>
-
-      {/* UI overlays — pointer-events: none on wrappers, re-enabled on children */}
-      <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
-        <TopBar />
-        {selectedAgentId && <AgentPanel />}
-        {selectedDepartmentId && !selectedAgentId && <DepartmentPanel />}
-        <CommandPanel />
-        <NotificationToast />
-
-        {/* Bottom hint */}
-        <div
-          style={{
-            position: 'absolute',
-            bottom: 16,
-            left: '50%',
-            transform: 'translateX(-50%)',
-            color: '#334155',
-            fontSize: '11px',
-            fontFamily: 'Inter, sans-serif',
-            userSelect: 'none',
-            pointerEvents: 'none',
-          }}
-        >
-          Click agents or departments to inspect · Scroll to zoom · Drag to orbit
-        </div>
+      <div className="department-dock__list">
+        {departments.map((department) => {
+          const count = agents.filter((agent) => agent.department_id === department.id).length
+          const selected = selectedDepartmentId === department.id
+          return (
+            <button
+              key={department.id}
+              className={`department-chip${selected ? ' department-chip--selected' : ''}`}
+              style={{ '--department-color': department.color } as CSSProperties}
+              aria-pressed={selected}
+              onClick={() => selectDepartment(selected ? null : department.id)}
+            >
+              <span className="department-chip__swatch" />
+              <span className="department-chip__name">{department.id === 'dept-001' ? 'Management' : department.id === 'dept-004' ? 'Development' : department.id === 'dept-005' ? 'Testing' : department.name}</span>
+              <span className="department-chip__count">{count}</span>
+            </button>
+          )
+        })}
       </div>
-    </div>
+    </nav>
   )
 }
 
+export default function App() {
+  const { loadAll, selectedAgentId, selectedDepartmentId, isCommandPanelOpen } = useStore()
+
+  useEffect(() => {
+    void loadAll()
+    const interval = window.setInterval(() => { void loadAll() }, 30_000)
+    return () => window.clearInterval(interval)
+  }, [loadAll])
+
+  return (
+    <main className={`app-shell${isCommandPanelOpen ? ' app-shell--command-open' : ''}`}>
+      <div className="scene-layer" aria-label="Interactive 3D AAROH office">
+        <Suspense fallback={<div className="scene-loading">Setting up the office…</div>}>
+          <OfficeScene />
+        </Suspense>
+      </div>
+      <div className="scene-wash" aria-hidden="true" />
+
+      <TopBar />
+      <DepartmentDock />
+
+      {selectedAgentId && <AgentPanel />}
+      {selectedDepartmentId && !selectedAgentId && <DepartmentPanel />}
+
+      <div className="scene-hint" aria-hidden="true">
+        <span className="scene-hint__live" />
+        <span>Drag to orbit</span><i /> <span>Scroll to zoom</span><i /> <span>Select a desk or room</span>
+      </div>
+
+      <CommandPanel />
+      <NotificationToast />
+    </main>
+  )
+}

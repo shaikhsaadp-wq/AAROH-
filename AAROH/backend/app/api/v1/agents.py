@@ -7,6 +7,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, status
 
 from app.core import store
+from app.core.store import DataConflict
 from app.core.logging import get_logger
 from app.schemas.schemas import (
     AgentCreate,
@@ -50,17 +51,23 @@ async def create_agent(payload: AgentCreate) -> AgentResponse:
     data["tasks_completed"] = 0
     data["tasks_in_progress"] = 0
     data["updated_at"] = None
-    agent = store.insert("agents", data)
+    try:
+        agent = store.insert("agents", data)
+    except DataConflict as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     return agent
 
 
 @router.patch("/{agent_id}", response_model=AgentResponse)
 async def update_agent(agent_id: str, payload: AgentUpdate) -> AgentResponse:
     """Partially update an agent (status, activity, etc.)."""
-    patch = {k: v for k, v in payload.model_dump().items() if v is not None}
+    patch = {k: v for k, v in payload.model_dump(exclude_unset=True).items() if v is not None}
     if not patch:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No fields to update")
-    updated = store.update("agents", agent_id, patch)
+    try:
+        updated = store.update("agents", agent_id, patch)
+    except DataConflict as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     if not updated:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Agent '{agent_id}' not found")
     logger.info("Updated agent %s: %s", agent_id, list(patch.keys()))
@@ -70,8 +77,11 @@ async def update_agent(agent_id: str, payload: AgentUpdate) -> AgentResponse:
 @router.delete("/{agent_id}", response_model=MessageResponse)
 async def delete_agent(agent_id: str) -> MessageResponse:
     """Remove an agent from the system."""
-    if not store.delete("agents", agent_id):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Agent '{agent_id}' not found")
+    try:
+        if not store.delete("agents", agent_id):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Agent '{agent_id}' not found")
+    except DataConflict as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     logger.info("Deleted agent %s", agent_id)
     return MessageResponse(message=f"Agent '{agent_id}' deleted successfully")
 

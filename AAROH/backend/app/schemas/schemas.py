@@ -48,6 +48,7 @@ class AgentCreate(AgentBase):
 class AgentUpdate(BaseModel):
     name: str | None = None
     role: str | None = None
+    department_id: str | None = None
     status: AgentStatus | None = None
     current_activity: str | None = None
     capabilities: list[str] | None = None

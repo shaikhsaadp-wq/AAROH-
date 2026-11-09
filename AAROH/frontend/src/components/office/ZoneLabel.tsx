@@ -1,62 +1,43 @@
-// AAROH AI — Department Zone Labels (3D HTML overlays)
-// Rendered on top of each zone in the office floor.
+// Department nameplates float above the backend-backed room floor plans.
 
 import { Html } from '@react-three/drei'
+import type { CSSProperties } from 'react'
 import type { Department } from '../../types'
+import { getRoomLayout } from './roomLayout'
 
-interface ZoneLabelProps {
+export function ZoneLabel({
+  department,
+  index,
+  agentCount,
+  selected,
+  onClick,
+}: {
   department: Department
+  index: number
+  agentCount: number
   selected: boolean
   onClick: () => void
-}
-
-const ICON_MAP: Record<string, string> = {
-  building: '🏢',
-  search: '🔍',
-  palette: '🎨',
-  code: '⚙️',
-  'shield-check': '🛡️',
-  users: '👥',
-  'book-open': '📖',
-  server: '🖥️',
-  'door-open': '🚪',
-}
-
-export function ZoneLabel({ department, selected, onClick }: ZoneLabelProps) {
-  const icon = ICON_MAP[department.icon] ?? '📌'
-  const deptPos = department.location
+}) {
+  const layout = getRoomLayout(department, index)
+  const initials = department.slug.slice(0, 2).toUpperCase()
+  const name = department.id === 'dept-001' ? 'Management' : department.id === 'dept-004' ? 'Development' : department.id === 'dept-005' ? 'Testing' : department.name
 
   return (
     <Html
-      position={[deptPos.x, 0.5, deptPos.z]}
+      position={[layout.center[0], 0.24, layout.center[1] - layout.size[1] / 2 + 0.7]}
       center
-      distanceFactor={12}
-      onClick={(e) => { e.stopPropagation(); onClick() }}
+      distanceFactor={13}
+      zIndexRange={[30, 0]}
+      onClick={(event) => { event.stopPropagation(); onClick() }}
       style={{ cursor: 'pointer', pointerEvents: 'all', userSelect: 'none' }}
     >
-      <div
-        style={{
-          background: selected ? `${department.color}22` : 'rgba(10,10,20,0.75)',
-          border: `1.5px solid ${selected ? department.color : department.color + '55'}`,
-          borderRadius: '10px',
-          padding: '5px 12px',
-          color: '#e2e8f0',
-          fontSize: '12px',
-          fontWeight: selected ? 700 : 500,
-          fontFamily: 'Inter, sans-serif',
-          whiteSpace: 'nowrap',
-          backdropFilter: 'blur(8px)',
-          boxShadow: selected ? `0 0 16px ${department.color}66` : 'none',
-          transition: 'all 0.2s ease',
-          display: 'flex',
-          alignItems: 'center',
-          gap: '6px',
-        }}
-      >
-        <span style={{ fontSize: '14px' }}>{icon}</span>
-        <span style={{ color: selected ? '#fff' : '#cbd5e1' }}>{department.name}</span>
-      </div>
+      <button className={`room-sign${selected ? ' room-sign--selected' : ''}`} style={{ '--room-color': department.color } as CSSProperties}>
+        <span className="room-sign__mark">{initials}</span>
+        <span className="room-sign__copy">
+          <span className="room-sign__name">{name}</span>
+          <span className="room-sign__team">{agentCount} {agentCount === 1 ? 'agent' : 'agents'} · {department.status}</span>
+        </span>
+      </button>
     </Html>
   )
 }
-

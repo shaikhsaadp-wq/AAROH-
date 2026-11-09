@@ -1,4 +1,4 @@
-# AAROH AI — Phase 1: Interactive 3D Virtual Office
+# AAROH AI — Phase 2A: Persistent Backend & 3D Virtual Office
 
 > **Virtual AI Company Platform** | Phase 1 — Foundation
 
@@ -9,15 +9,15 @@ AAROH AI is a personal AI assistant and virtual software company platform. Phase
 ## 🏗 Project Structure
 
 ```
-jarvis/
+AAROH/
 ├── backend/          ← Python 3.14 + FastAPI
 │   ├── app/
 │   │   ├── main.py
 │   │   ├── api/v1/   ← agents, departments, projects, tasks, commands
-│   │   ├── core/     ← config, logging, in-memory store
+│   │   ├── core/     ← config, logging, SQLite sessions and repository
 │   │   ├── providers/mock.py  ← Mock AI (zero cost)
 │   │   └── schemas/schemas.py
-│   └── tests/test_api.py  ← 26 integration tests
+│   └── tests/        ← API and persistence tests
 └── frontend/         ← React + TypeScript + Three.js
     └── src/
         ├── components/office/  ← 3D scene, agents, furniture
@@ -36,9 +36,11 @@ jarvis/
 Open **Terminal 1**:
 
 ```powershell
-$env:PYTHONPATH = "C:\AAROH\jarvis\backend"
-cd C:\AAROH\jarvis\backend
-python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
+cd C:\AAROH\AAROH\backend
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install --no-binary=SQLAlchemy -r requirements.txt
+cd C:\AAROH\AAROH
+.\start-backend.ps1
 ```
 
 Backend is live at: `http://127.0.0.1:8000`  
@@ -49,8 +51,8 @@ Interactive API docs: `http://127.0.0.1:8000/docs`
 Open **Terminal 2**:
 
 ```powershell
-cd C:\AAROH\jarvis\frontend
-npm run dev
+cd C:\AAROH\AAROH
+.\start-frontend.ps1
 ```
 
 Frontend is live at: `http://localhost:5173`
@@ -62,12 +64,11 @@ Frontend is live at: `http://localhost:5173`
 ## 🧪 Run Backend Tests
 
 ```powershell
-$env:PYTHONPATH = "C:\AAROH\jarvis\backend"
-cd C:\AAROH\jarvis\backend
-python -m pytest tests/ -v --tb=short
+cd C:\AAROH\AAROH
+.\run-tests.ps1
 ```
 
-**Result: 26/26 tests pass.**
+The test script uses an isolated temporary SQLite database.
 
 ---
 
@@ -155,19 +156,19 @@ python -m pytest tests/ -v --tb=short
 Copy `.env.example` to `.env` in `backend/`:
 
 ```powershell
-copy C:\AAROH\jarvis\backend\.env.example C:\AAROH\jarvis\backend\.env
+copy C:\AAROH\AAROH\backend\.env.example C:\AAROH\AAROH\backend\.env
 ```
 
-No secrets required for Phase 1 — all AI is mocked.
+SQLite data is stored under the user local application-data directory by default, outside the repository. Set DATABASE_URL to choose another local SQLite file. No paid AI provider or API key is used.
 
 ---
 
-## 🚧 Known Limitations (Phase 1)
+## 🚧 Known Limitations
 
-- **In-memory data store** — data resets when the backend restarts
+- **SQLite data store** — application records persist across backend restarts
 - **Mock AI only** — no Claude / GPT / Gemini integration yet
 - **No authentication** — no login system yet
-- **No persistent memory** — PostgreSQL added in Phase 3
+- **No persistent AI memory** — Phase 2A persists application records, not model memory
 - **Agents are simulated** — no real task execution
 
 ---

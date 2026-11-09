@@ -1,12 +1,6 @@
-"""
-AAROH AI — In-Memory Data Store (Phase 1)
-
-A simple thread-safe in-memory store that powers the API without any
-external database.  Replaced by PostgreSQL in Phase 2.
-"""
+"""AAROH persistent repository and legacy seed records."""
 from __future__ import annotations
 
-import threading
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -320,55 +314,282 @@ TASKS: list[dict[str, Any]] = [
 # ─────────────────────────────────────────────────────────────
 # In-memory store with thread safety
 # ─────────────────────────────────────────────────────────────
-_lock = threading.Lock()
+from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
 
-_store: dict[str, list[dict[str, Any]]] = {
-    "departments": list(DEPARTMENTS),
-    "agents": list(AGENTS),
-    "projects": list(PROJECTS),
-    "tasks": list(TASKS),
-    "command_log": [],
+from app.core.database import get_session_factory
+from app.models import Agent, Command, Department, Project, Task
+
+
+class DataConflict(Exception):
+    """A requested write would violate a data relationship or invariant."""
+
+
+_MODEL_BY_COLLECTION = {
+    "agents": Agent,
+    "departments": Department,
+    "projects": Project,
+    "tasks": Task,
+    "command_log": Command,
 }
 
 
+def _serialize(session: Session, collection: str, row: Any) -> dict[str, Any]:
+    if collection == "agents":
+        completed, active = session.execute(
+            select(
+                func.sum(Task.status == "completed"),
+                func.sum(Task.status == "in_progress"),
+            ).where(Task.assigned_agent_id == row.id)
+        ).one()
+        return {
+            "id": row.id, "name": row.name, "role": row.role,
+            "department_id": row.department_id,
+            "department": row.department_record.name,
+            "avatar_color": row.avatar_color, "avatar_shape": row.avatar_shape,
+            "status": row.status, "current_activity": row.current_activity,
+            "capabilities": row.capabilities, "workstation": row.workstation,
+            "is_simulated": row.is_simulated, "simulation_note": row.simulation_note,
+            "tasks_completed": int(completed or 0), "tasks_in_progress": int(active or 0),
+            "created_at": row.created_at, "updated_at": row.updated_at,
+        }
+    if collection == "departments":
+        return {
+            "id": row.id, "name": row.name, "slug": row.slug,
+            "description": row.description, "color": row.color, "icon": row.icon,
+            "location": row.location, "headcount": len(row.agents), "status": row.status,
+        }
+    if collection == "projects":
+        return {
+            "id": row.id, "name": row.name, "description": row.description,
+            "status": row.status, "phase": row.phase, "tech_stack": row.tech_stack,
+            "assigned_agents": [agent.id for agent in row.agents],
+            "created_at": row.created_at, "updated_at": row.updated_at,
+        }
+    model = _MODEL_BY_COLLECTION[collection]
+    return {column.name: getattr(row, column.name) for column in model.__table__.columns}
+
+
 def get_all(collection: str) -> list[dict[str, Any]]:
-    with _lock:
-        return list(_store.get(collection, []))
+    model = _MODEL_BY_COLLECTION[collection]
+    with get_session_factory()() as session:
+        return [_serialize(session, collection, row) for row in session.scalars(select(model)).all()]
 
 
 def get_by_id(collection: str, item_id: str) -> dict[str, Any] | None:
-    with _lock:
-        return next(
-            (item for item in _store.get(collection, []) if item["id"] == item_id),
-            None,
+    model = _MODEL_BY_COLLECTION[collection]
+    with get_session_factory()() as session:
+        row = session.get(model, item_id)
+        return _serialize(session, collection, row) if row else None
+
+
+def _active_task_count(session: Session, agent_id: str) -> int:
+    return int(session.scalar(
+        select(func.count()).select_from(Task).where(
+            Task.assigned_agent_id == agent_id, Task.status == "in_progress"
         )
+    ) or 0)
+
+
+def _sync_agent_status(session: Session, agent_id: str, completed_event: bool = False) -> None:
+    agent = session.get(Agent, agent_id)
+    if not agent or agent.status in {"meeting", "offline"}:
+        return
+    active = _active_task_count(session, agent_id)
+    if active:
+        agent.status = "working"
+    elif completed_event and agent.status == "working":
+        agent.status = "completed"
+    elif agent.status == "working":
+        agent.status = "idle"
+
+
+def _validate_agent_status(session: Session, agent: Agent) -> None:
+    active = _active_task_count(session, agent.id)
+    if agent.status == "working" and not active:
+        raise DataConflict("An agent must have an in-progress task before it can be marked working")
+    if agent.status in {"idle", "completed"} and active:
+        raise DataConflict("An agent with in-progress tasks cannot be marked idle or completed")
+    if agent.status == "offline" and active:
+        raise DataConflict("An agent with in-progress tasks cannot be marked offline")
+
+
+def _validate_task_assignment(session: Session, task: Task) -> None:
+    if task.status != "in_progress":
+        return
+    if not task.assigned_agent_id:
+        raise DataConflict("An in-progress task must be assigned to an agent")
+    assigned_agent = session.get(Agent, task.assigned_agent_id)
+    if assigned_agent and assigned_agent.status == "offline":
+        raise DataConflict("An offline agent cannot be assigned an in-progress task")
+
+
+def _resolve_agents(session: Session, agent_ids: list[str]) -> list[Agent]:
+    if len(set(agent_ids)) != len(agent_ids):
+        raise DataConflict("A project cannot assign the same agent more than once")
+    agents = [session.get(Agent, agent_id) for agent_id in agent_ids]
+    if any(agent is None for agent in agents):
+        raise DataConflict("Every assigned project agent must exist")
+    return [agent for agent in agents if agent is not None]
 
 
 def insert(collection: str, item: dict[str, Any]) -> dict[str, Any]:
-    item.setdefault("id", _uuid())
-    item.setdefault("created_at", _now())
-    item.setdefault("updated_at", _now())
-    with _lock:
-        _store.setdefault(collection, []).append(item)
-    return item
+    model = _MODEL_BY_COLLECTION[collection]
+    data = dict(item)
+    data.setdefault("id", _uuid())
+    now = _now()
+    if collection == "command_log":
+        data.setdefault("timestamp", now)
+    elif collection != "departments":
+        data.setdefault("created_at", now)
+        data.setdefault("updated_at", now)
+    with get_session_factory()() as session:
+        try:
+            if collection == "agents":
+                data.pop("department", None)
+                data.pop("tasks_completed", None)
+                data.pop("tasks_in_progress", None)
+                row = Agent(**data)
+                session.add(row)
+                session.flush()
+                if row.status == "working":
+                    row.status = "idle"
+            elif collection == "projects":
+                assigned_ids = data.pop("assigned_agents", [])
+                row = Project(**data)
+                session.add(row)
+                session.flush()
+                row.agents = _resolve_agents(session, assigned_ids)
+            elif collection == "departments":
+                data.pop("headcount", None)
+                row = Department(**data)
+                session.add(row)
+            else:
+                row = model(**data)
+                session.add(row)
+            session.flush()
+            if collection == "tasks":
+                _validate_task_assignment(session, row)
+                if row.assigned_agent_id:
+                    _sync_agent_status(session, row.assigned_agent_id)
+            result = _serialize(session, collection, row)
+            session.commit()
+            return result
+        except IntegrityError as exc:
+            session.rollback()
+            raise DataConflict("A referenced record is missing or a unique value is already in use") from exc
 
 
 def update(collection: str, item_id: str, patch: dict[str, Any]) -> dict[str, Any] | None:
-    with _lock:
-        for item in _store.get(collection, []):
-            if item["id"] == item_id:
-                item.update(patch)
-                item["updated_at"] = _now()
-                return dict(item)
-    return None
+    model = _MODEL_BY_COLLECTION[collection]
+    with get_session_factory()() as session:
+        row = session.get(model, item_id)
+        if not row:
+            return None
+        previous_task_status = row.status if collection == "tasks" else None
+        previous_agent_id = row.assigned_agent_id if collection == "tasks" else None
+        try:
+            values = dict(patch)
+            if collection == "agents":
+                for key, value in values.items():
+                    setattr(row, key, value)
+                row.updated_at = _now()
+                session.flush()
+                _validate_agent_status(session, row)
+                _sync_agent_status(session, row.id)
+            elif collection == "projects" and "assigned_agents" in values:
+                row.agents = _resolve_agents(session, values.pop("assigned_agents") or [])
+                for key, value in values.items():
+                    setattr(row, key, value)
+                row.updated_at = _now()
+            elif collection == "tasks":
+                for key, value in values.items():
+                    setattr(row, key, value)
+                row.updated_at = _now()
+                session.flush()
+                _validate_task_assignment(session, row)
+                affected = {a for a in (previous_agent_id, row.assigned_agent_id) if a}
+                completed = previous_task_status != "completed" and row.status == "completed"
+                for agent_id in affected:
+                    _sync_agent_status(session, agent_id, completed_event=completed and agent_id == row.assigned_agent_id)
+            else:
+                for key, value in values.items():
+                    setattr(row, key, value)
+                if hasattr(row, "updated_at"):
+                    row.updated_at = _now()
+            session.flush()
+            result = _serialize(session, collection, row)
+            session.commit()
+            return result
+        except IntegrityError as exc:
+            session.rollback()
+            raise DataConflict("A referenced record is missing or the update conflicts with existing data") from exc
 
 
 def delete(collection: str, item_id: str) -> bool:
-    with _lock:
-        original = _store.get(collection, [])
-        filtered = [i for i in original if i["id"] != item_id]
-        if len(filtered) == len(original):
+    model = _MODEL_BY_COLLECTION[collection]
+    with get_session_factory()() as session:
+        row = session.get(model, item_id)
+        if not row:
             return False
-        _store[collection] = filtered
-    return True
+        affected_agent_id = row.assigned_agent_id if collection == "tasks" else None
+        try:
+            session.delete(row)
+            session.flush()
+            if affected_agent_id:
+                _sync_agent_status(session, affected_agent_id)
+            session.commit()
+            return True
+        except IntegrityError as exc:
+            session.rollback()
+            raise DataConflict("This record has dependent records and cannot be deleted") from exc
+
+
+def seed_database(session: Session) -> None:
+    """Import the original seed records once, preserving IDs and old aggregates."""
+    try:
+        for item in DEPARTMENTS:
+            if session.get(Department, item["id"]) is None:
+                data = dict(item)
+                data.pop("headcount", None)
+                session.add(Department(**data))
+        session.flush()
+
+        for item in AGENTS:
+            if session.get(Agent, item["id"]) is None:
+                data = dict(item)
+                data["legacy_task_stats"] = {
+                    "tasks_completed": data.pop("tasks_completed", 0),
+                    "tasks_in_progress": data.pop("tasks_in_progress", 0),
+                }
+                data.pop("department", None)
+                session.add(Agent(**data))
+        session.flush()
+
+        for item in PROJECTS:
+            if session.get(Project, item["id"]) is None:
+                data = dict(item)
+                assigned_ids = data.pop("assigned_agents", [])
+                project = Project(**data)
+                project.agents = _resolve_agents(session, assigned_ids)
+                session.add(project)
+        session.flush()
+
+        for item in TASKS:
+            if session.get(Task, item["id"]) is None:
+                session.add(Task(**item))
+        session.flush()
+
+        for agent in session.scalars(select(Agent)).all():
+            active = _active_task_count(session, agent.id)
+            if agent.status not in {"meeting", "offline"}:
+                if active:
+                    agent.status = "working"
+                elif agent.status == "working":
+                    agent.status = "idle"
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
 

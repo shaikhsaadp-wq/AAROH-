@@ -6,6 +6,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, status
 
 from app.core import store
+from app.core.store import DataConflict
 from app.core.logging import get_logger
 from app.schemas.schemas import (
     ProjectCreate,
@@ -39,15 +40,21 @@ async def get_project(project_id: str) -> ProjectResponse:
 
 @project_router.post("", response_model=ProjectResponse, status_code=status.HTTP_201_CREATED)
 async def create_project(payload: ProjectCreate) -> ProjectResponse:
-    proj = store.insert("projects", payload.model_dump())
+    try:
+        proj = store.insert("projects", payload.model_dump())
+    except DataConflict as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     logger.info("Created project: %s", payload.name)
     return proj
 
 
 @project_router.delete("/{project_id}", response_model=MessageResponse)
 async def delete_project(project_id: str) -> MessageResponse:
-    if not store.delete("projects", project_id):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Project '{project_id}' not found")
+    try:
+        if not store.delete("projects", project_id):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Project '{project_id}' not found")
+    except DataConflict as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     return MessageResponse(message=f"Project '{project_id}' deleted")
 
 
@@ -74,17 +81,23 @@ async def get_task(task_id: str) -> TaskResponse:
 
 @task_router.post("", response_model=TaskResponse, status_code=status.HTTP_201_CREATED)
 async def create_task(payload: TaskCreate) -> TaskResponse:
-    task = store.insert("tasks", payload.model_dump())
+    try:
+        task = store.insert("tasks", payload.model_dump())
+    except DataConflict as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     logger.info("Created task: %s", payload.title)
     return task
 
 
 @task_router.patch("/{task_id}", response_model=TaskResponse)
 async def update_task(task_id: str, payload: TaskUpdate) -> TaskResponse:
-    patch = {k: v for k, v in payload.model_dump().items() if v is not None}
+    patch = payload.model_dump(exclude_unset=True)
     if not patch:
         raise HTTPException(status_code=400, detail="No fields to update")
-    updated = store.update("tasks", task_id, patch)
+    try:
+        updated = store.update("tasks", task_id, patch)
+    except DataConflict as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     if not updated:
         raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found")
     return updated
@@ -92,7 +105,10 @@ async def update_task(task_id: str, payload: TaskUpdate) -> TaskResponse:
 
 @task_router.delete("/{task_id}", response_model=MessageResponse)
 async def delete_task(task_id: str) -> MessageResponse:
-    if not store.delete("tasks", task_id):
-        raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found")
+    try:
+        if not store.delete("tasks", task_id):
+            raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found")
+    except DataConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     return MessageResponse(message=f"Task '{task_id}' deleted")
 

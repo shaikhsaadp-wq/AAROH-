@@ -34,3 +34,10 @@ Thumbs.db
 *.log
 logs/
 
+# Local AAROH SQLite data (the default database lives outside this repository).
+*.db
+*.sqlite
+*.sqlite3
+*.db-*
+*.sqlite3-*
+

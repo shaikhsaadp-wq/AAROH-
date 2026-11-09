@@ -1,104 +1,46 @@
-// AAROH AI — Department Info Panel
-
+import type { CSSProperties } from 'react'
 import { useStore } from '../../store/useStore'
 
 export function DepartmentPanel() {
-  const { departments, agents, selectedDepartmentId, selectDepartment, tasks } = useStore()
-  const dept = departments.find((d) => d.id === selectedDepartmentId)
+  const { departments, agents, tasks, selectedDepartmentId, selectDepartment, selectAgent } = useStore()
+  const department = departments.find((item) => item.id === selectedDepartmentId)
+  if (!department) return null
 
-  if (!dept) return null
-
-  const deptAgents = agents.filter((a) => a.department_id === dept.id)
-  const deptTaskCount = tasks.filter((t) =>
-    deptAgents.some((a) => a.id === t.assigned_agent_id)
-  ).length
-
-  const ICON_MAP: Record<string, string> = {
-    building: '🏢', search: '🔍', palette: '🎨', code: '⚙️',
-    'shield-check': '🛡️', users: '👥', 'book-open': '📖',
-    server: '🖥️', 'door-open': '🚪',
-  }
+  const team = agents.filter((agent) => agent.department_id === department.id)
+  const departmentTasks = tasks.filter((task) => team.some((agent) => agent.id === task.assigned_agent_id))
+  const working = team.filter((agent) => agent.status === 'working').length
+  const departmentName = department.id === 'dept-001' ? 'Management' : department.id === 'dept-004' ? 'Development' : department.id === 'dept-005' ? 'Testing' : department.name
 
   return (
-    <div className="fixed left-4 top-20 w-72 z-30 pointer-events-auto" style={{ fontFamily: 'Inter, sans-serif' }}>
-      <div
-        style={{
-          background: 'rgba(15,15,26,0.95)',
-          border: `1.5px solid ${dept.color}44`,
-          borderRadius: '16px',
-          backdropFilter: 'blur(20px)',
-          boxShadow: `0 8px 32px rgba(0,0,0,0.5)`,
-          overflow: 'hidden',
-        }}
-      >
-        {/* Header */}
-        <div
-          style={{
-            background: `linear-gradient(135deg, ${dept.color}22, transparent)`,
-            padding: '16px 20px',
-            borderBottom: `1px solid ${dept.color}22`,
-            display: 'flex',
-            alignItems: 'center',
-            gap: '12px',
-          }}
-        >
-          <div style={{ fontSize: '24px' }}>{ICON_MAP[dept.icon] ?? '📌'}</div>
-          <div style={{ flex: 1 }}>
-            <div style={{ color: '#f1f5f9', fontWeight: 700, fontSize: '14px' }}>{dept.name}</div>
-            <div style={{ color: dept.color, fontSize: '10px', marginTop: 2, textTransform: 'uppercase', letterSpacing: '0.08em' }}>{dept.slug}</div>
-          </div>
-          <button
-            onClick={() => selectDepartment(null)}
-            style={{ background: 'rgba(255,255,255,0.08)', border: 'none', borderRadius: '8px', color: '#94a3b8', cursor: 'pointer', width: 28, height: 28, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '14px' }}
-          >
-            ✕
-          </button>
-        </div>
+    <aside className="detail-panel detail-panel--department">
+      <div className="detail-panel__eyebrow"><span>Department</span><span className="profile-code">{department.slug}</span></div>
+      <button className="panel-close" onClick={() => selectDepartment(null)} aria-label="Close department details">×</button>
 
-        <div style={{ padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
-          <div style={{ color: '#94a3b8', fontSize: '12px', lineHeight: 1.6 }}>{dept.description}</div>
-
-          {/* Stats */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-            <div style={{ background: 'rgba(255,255,255,0.03)', borderRadius: '10px', padding: '10px', textAlign: 'center' }}>
-              <div style={{ color: dept.color, fontSize: '22px', fontWeight: 700 }}>{deptAgents.length}</div>
-              <div style={{ color: '#64748b', fontSize: '10px', marginTop: 2 }}>Agents</div>
-            </div>
-            <div style={{ background: 'rgba(255,255,255,0.03)', borderRadius: '10px', padding: '10px', textAlign: 'center' }}>
-              <div style={{ color: '#10b981', fontSize: '22px', fontWeight: 700 }}>{deptTaskCount}</div>
-              <div style={{ color: '#64748b', fontSize: '10px', marginTop: 2 }}>Tasks</div>
-            </div>
-          </div>
-
-          {/* Agents in dept */}
-          {deptAgents.length > 0 && (
-            <div>
-              <div style={{ color: '#64748b', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6 }}>Team</div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                {deptAgents.map((a) => (
-                  <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'rgba(255,255,255,0.03)', borderRadius: '8px', padding: '7px 10px' }}>
-                    <div style={{ width: 28, height: 28, borderRadius: '50%', background: a.avatar_color, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: '12px', fontWeight: 700 }}>
-                      {a.name[0]}
-                    </div>
-                    <div>
-                      <div style={{ color: '#cbd5e1', fontSize: '12px', fontWeight: 500 }}>{a.name}</div>
-                      <div style={{ color: '#475569', fontSize: '10px' }}>{a.role}</div>
-                    </div>
-                    <div style={{ marginLeft: 'auto', width: 8, height: 8, borderRadius: '50%', background: a.status === 'working' ? '#10b981' : '#94a3b8' }} />
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {deptAgents.length === 0 && (
-            <div style={{ color: '#475569', fontSize: '12px', textAlign: 'center', padding: '8px' }}>
-              No agents assigned yet — coming in Phase 3
-            </div>
-          )}
-        </div>
+      <div className="department-profile">
+        <span className="department-profile__mark" style={{ '--department-color': department.color } as CSSProperties}>
+          {department.slug.slice(0, 2).toUpperCase()}
+        </span>
+        <div><h2>{departmentName}</h2><p>{department.description}</p></div>
       </div>
-    </div>
+
+      <div className="department-metrics">
+        <div><strong>{team.length.toString().padStart(2, '0')}</strong><span>Agents</span></div>
+        <div><strong>{working.toString().padStart(2, '0')}</strong><span>Working</span></div>
+        <div><strong>{departmentTasks.length.toString().padStart(2, '0')}</strong><span>Tasks</span></div>
+      </div>
+
+      <div className="department-team">
+        <div className="agent-workflow__heading"><span className="section-kicker">Team roster</span><span>{team.length} people</span></div>
+        {team.length ? team.map((agent) => (
+          <button className="team-member" key={agent.id} onClick={() => selectAgent(agent.id)}>
+            <span className="team-member__avatar" style={{ '--avatar-color': agent.avatar_color } as CSSProperties}>{agent.name.slice(0, 1)}</span>
+            <span className="team-member__copy"><strong>{agent.name}</strong><small>{agent.role}</small></span>
+            <span className={`team-member__state team-member__state--${agent.status}`} />
+          </button>
+        )) : <p className="empty-note">This room is ready for its first agent.</p>}
+      </div>
+
+      <div className="department-footer"><span className="department-footer__dot" style={{ background: department.color }} />Selected room · {department.status}</div>
+    </aside>
   )
 }
-

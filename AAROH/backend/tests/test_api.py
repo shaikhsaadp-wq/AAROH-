@@ -15,6 +15,7 @@ Run:
 from __future__ import annotations
 
 import os
+import tempfile
 import subprocess
 import sys
 import time
@@ -24,13 +25,19 @@ import requests
 
 BASE_URL = "http://127.0.0.1:18765"
 _server_proc: subprocess.Popen | None = None
+_test_data_dir: tempfile.TemporaryDirectory | None = None
 
 
 # ─── Server lifecycle ─────────────────────────────────────────────────────────
 
 def _start_server() -> subprocess.Popen:
+    global _test_data_dir
+    if _test_data_dir is None:
+        _test_data_dir = tempfile.TemporaryDirectory(prefix="aaroh-api-tests-", ignore_cleanup_errors=True)
     env = dict(os.environ)
     env["PYTHONPATH"] = str(os.path.dirname(os.path.dirname(__file__)))
+    env["DEBUG"] = "true"
+    env["DATABASE_URL"] = f"sqlite:///{(_test_data_dir.name + '/test.sqlite3').replace(os.sep, '/')}"
     proc = subprocess.Popen(
         [
             sys.executable, "-m", "uvicorn",
@@ -71,6 +78,9 @@ def live_server():
         _server_proc.wait(timeout=5)
     except subprocess.TimeoutExpired:
         _server_proc.kill()
+        _server_proc.wait(timeout=5)
+    if _test_data_dir:
+        _test_data_dir.cleanup()
 
 
 def get(path: str, **kwargs) -> requests.Response:
@@ -150,10 +160,16 @@ def test_update_agent_status():
 
 
 def test_filter_agents_by_status():
+    created = post("/api/tasks", {
+        "project_id": "proj-001", "title": "Temporary active task",
+        "status": "in_progress", "priority": "low", "assigned_agent_id": "agent-005",
+    })
+    assert created.status_code == 201
     patch("/api/agents/agent-005", {"status": "working"})
     r = get("/api/agents", params={"agent_status": "working"})
     assert r.status_code == 200
     assert all(a["status"] == "working" for a in r.json())
+    delete(f"/api/tasks/{created.json()['id']}")
 
 
 def test_filter_agents_by_department():
@@ -268,12 +284,14 @@ def test_update_task_status():
     payload = {
         "project_id": "proj-001", "title": "Task to Update",
         "description": "", "status": "pending", "priority": "medium",
+        "assigned_agent_id": "agent-001",
     }
     created = post("/api/tasks", payload)
     task_id = created.json()["id"]
     r = patch(f"/api/tasks/{task_id}", {"status": "in_progress"})
     assert r.status_code == 200
     assert r.json()["status"] == "in_progress"
+    delete(f"/api/tasks/{task_id}")
 
 
 def test_delete_task():
@@ -320,3 +338,104 @@ def test_command_history():
 def test_empty_command_rejected():
     r = post("/api/commands", {"command": ""})
     assert r.status_code == 422
+
+
+def test_agent_task_statistics_and_department_headcount_are_derived():
+    agents = get("/api/agents").json()
+    tasks = get("/api/tasks").json()
+    departments = get("/api/departments").json()
+    for agent in agents:
+        assigned = [task for task in tasks if task.get("assigned_agent_id") == agent["id"]]
+        assert agent["tasks_completed"] == sum(task["status"] == "completed" for task in assigned)
+        assert agent["tasks_in_progress"] == sum(task["status"] == "in_progress" for task in assigned)
+    for department in departments:
+        assert department["headcount"] == sum(
+            agent["department_id"] == department["id"] for agent in agents
+        )
+
+
+def test_in_progress_task_transitions_agent_status_and_statistics():
+    created = post("/api/tasks", {
+        "project_id": "proj-001", "title": "Status transition task",
+        "status": "in_progress", "priority": "medium", "assigned_agent_id": "agent-001",
+    })
+    assert created.status_code == 201
+    agent = get("/api/agents/agent-001").json()
+    assert agent["status"] == "working"
+    assert agent["tasks_in_progress"] == 1
+
+    completed = patch(f"/api/tasks/{created.json()['id']}", {"status": "completed"})
+    assert completed.status_code == 200
+    agent = get("/api/agents/agent-001").json()
+    assert agent["status"] == "completed"
+    assert agent["tasks_completed"] == 1
+    assert agent["tasks_in_progress"] == 0
+
+
+def test_relationships_are_validated_and_dependent_records_cannot_be_deleted():
+    bad_agent = post("/api/agents", {
+        "name": "Invalid department agent", "role": "test",
+        "department_id": "dept-missing", "department": "Missing",
+    })
+    assert bad_agent.status_code == 409
+
+    bad_task = post("/api/tasks", {
+        "project_id": "proj-missing", "title": "Invalid project task",
+    })
+    assert bad_task.status_code == 409
+    bad_assignment = post("/api/tasks", {
+        "project_id": "proj-001", "title": "Invalid agent assignment",
+        "assigned_agent_id": "agent-missing",
+    })
+    assert bad_assignment.status_code == 409
+
+    bad_project_agent = post("/api/projects", {
+        "name": "Invalid project assignment", "assigned_agents": ["agent-missing"],
+    })
+    assert bad_project_agent.status_code == 409
+
+    assert delete("/api/departments/dept-001").status_code == 409
+    assert delete("/api/projects/proj-001").status_code == 409
+
+
+def test_working_status_requires_an_active_task():
+    response = patch("/api/agents/agent-003", {"status": "working"})
+    assert response.status_code == 409
+
+
+def test_in_progress_task_requires_an_online_agent_assignment():
+    unassigned = post("/api/tasks", {
+        "project_id": "proj-001", "title": "Unassigned active task",
+        "status": "in_progress",
+    })
+    assert unassigned.status_code == 409
+
+    offline = patch("/api/agents/agent-001", {"status": "offline"})
+    assert offline.status_code == 200
+    active_task = post("/api/tasks", {
+        "project_id": "proj-001", "title": "Offline agent task",
+        "status": "in_progress", "assigned_agent_id": "agent-001",
+    })
+    assert active_task.status_code == 409
+
+
+def test_api_records_survive_a_backend_process_restart():
+    global _server_proc
+    created = post("/api/departments", {
+        "name": "Restart Persistence Department", "slug": "restart-persistence",
+        "description": "Created by the restart test", "location": {},
+    })
+    assert created.status_code == 201
+    department_id = created.json()["id"]
+
+    _server_proc.terminate()
+    try:
+        _server_proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        _server_proc.kill()
+        _server_proc.wait(timeout=5)
+    _server_proc = _start_server()
+
+    persisted = get(f"/api/departments/{department_id}")
+    assert persisted.status_code == 200
+    assert persisted.json()["slug"] == "restart-persistence"

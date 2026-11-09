@@ -7,7 +7,8 @@ Write-Host "  AAROH AI — Frontend (Phase 1)" -ForegroundColor Magenta
 Write-Host "  React + TypeScript + Three.js + Vite" -ForegroundColor DarkGray
 Write-Host ""
 
-Set-Location "C:\AAROH\jarvis\frontend"
+$frontendPath = Join-Path $PSScriptRoot "frontend"
+Set-Location $frontendPath
 
 Write-Host "  Starting Vite dev server on http://localhost:5173 ..." -ForegroundColor Green
 Write-Host "  Proxying /api -> http://127.0.0.1:8000" -ForegroundColor DarkGray

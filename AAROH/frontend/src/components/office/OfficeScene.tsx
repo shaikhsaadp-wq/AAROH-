@@ -1,159 +1,228 @@
-// AAROH AI — Complete Virtual Office Scene
-// Assembles all departments, furniture, agents and lighting.
+// Backend-connected isometric office scene assembled from reusable R3F models.
 
-import { useEffect } from 'react'
 import { Canvas } from '@react-three/fiber'
-import { OrbitControls, Environment, Stars } from '@react-three/drei'
-import { OfficeEnvironment, OFFICE_ZONES } from './OfficeEnvironment'
-import { Workstation, Bookshelf, ServerRack, Plant } from './Furniture'
-import { AgentCharacter } from './AgentCharacter'
-import { ZoneLabel } from './ZoneLabel'
+import { OrbitControls } from '@react-three/drei'
+import { useMemo } from 'react'
 import { useStore } from '../../store/useStore'
-import type { Department } from '../../types'
+import { AgentCharacter } from './AgentCharacter'
+import { OfficeEnvironment } from './OfficeEnvironment'
+import { getRoomLayout } from './roomLayout'
+import { ZoneLabel } from './ZoneLabel'
+import {
+  Bookshelf,
+  ConferenceChair,
+  ConferenceTable,
+  FilingCabinet,
+  Plant,
+  ServerRack,
+  Sofa,
+  Whiteboard,
+  Workstation,
+} from './Furniture'
+import type { Agent, Department } from '../../types'
 
-// Map department IDs → agent workstation positions within their zone
-const AGENT_POSITIONS: Record<string, [number, number, number]> = {
-  'agent-001': [0,    0,  0.5],  // CEO Office
-  'agent-002': [-1.2, 0,  0.5],  // CEO Office (PM)
-  'agent-003': [-5.5, 0, -4.5],  // Research
-  'agent-004': [5.5,  0, -4.5],  // Design
-  'agent-005': [-5.5, 0,  5.5],  // Engineering
-  'agent-006': [5.5,  0,  5.5],  // QA
+function roomForAgent(agent: Agent, departments: Department[], departmentIndex: number) {
+  const index = departments.findIndex((department) => department.id === agent.department_id)
+  const department = index >= 0 ? departments[index] : undefined
+  return department ? getRoomLayout(department, index) : { center: [agent.workstation.x, agent.workstation.z] as [number, number], size: [6, 5] as [number, number] }
+}
+
+function agentSeat(agent: Agent, index: number, layout: { center: [number, number] }) {
+  const column = index % 2
+  const row = Math.floor(index / 2)
+  const deskX = layout.center[0] + (column === 0 ? -1.15 : 1.15)
+  const deskZ = layout.center[1] - 0.75 + row * 1.75
+  return {
+    desk: [deskX, 0, deskZ] as [number, number, number],
+    character: [deskX, 0.08, deskZ + 1.05] as [number, number, number],
+  }
 }
 
 function OfficeLighting() {
   return (
     <>
-      <ambientLight intensity={0.4} color="#1a1a3e" />
+      <color attach="background" args={['#d9c9ae']} />
+      <fog attach="fog" args={['#d9c9ae', 34, 68]} />
+      <hemisphereLight args={['#fff1dc', '#6a5448', 1.25]} />
+      <ambientLight intensity={0.48} />
       <directionalLight
-        position={[10, 15, 10]}
-        intensity={0.8}
-        color="#e0e8ff"
+        position={[-14, 24, -10]}
+        intensity={2.25}
+        color="#fff0d6"
         castShadow
         shadow-mapSize={[2048, 2048]}
+        shadow-camera-left={-22}
+        shadow-camera-right={22}
+        shadow-camera-top={22}
+        shadow-camera-bottom={-22}
+        shadow-bias={-0.0002}
       />
-      {/* Department accent lights */}
-      <pointLight position={[0, 3, 0]} intensity={0.5} color="#6366f1" distance={6} />
-      <pointLight position={[-5.5, 3, -5]} intensity={0.4} color="#0ea5e9" distance={5} />
-      <pointLight position={[5.5, 3, -5]} intensity={0.4} color="#ec4899" distance={5} />
-      <pointLight position={[-5.5, 3, 5]} intensity={0.4} color="#10b981" distance={5} />
-      <pointLight position={[5.5, 3, 5]} intensity={0.4} color="#f59e0b" distance={5} />
-      <pointLight position={[8.5, 3, 0]} intensity={0.5} color="#ef4444" distance={4} />
+      <pointLight position={[-7, 4, -6]} intensity={0.42} color="#ffe4bc" distance={12} />
+      <pointLight position={[5, 3.4, -5]} intensity={0.3} color="#d8e8dc" distance={9} />
+      <pointLight position={[0, 3.2, 5]} intensity={0.22} color="#f4c9a5" distance={10} />
     </>
   )
 }
 
-function OfficeFurniture() {
+function InteractiveStation({
+  agent,
+  deskPosition,
+  characterPosition,
+  selected,
+  onSelect,
+}: {
+  agent: Agent
+  deskPosition: [number, number, number]
+  characterPosition: [number, number, number]
+  selected: boolean
+  onSelect: () => void
+}) {
   return (
     <group>
-      {/* CEO Office */}
-      <Workstation position={[0.5, 0, 0]} screenColor="#6366f1" deskColor="#312e81" />
-      <Workstation position={[-1.2, 0, 0]} screenColor="#0ea5e9" deskColor="#1e3a5f" />
-      <Plant />
-
-      {/* Research Dept */}
-      <Workstation position={[-5.5, 0, -5]} screenColor="#0ea5e9" />
-      <Bookshelf />
-
-      {/* Design Dept */}
-      <Workstation position={[5.5, 0, -5]} screenColor="#ec4899" />
-      <group position={[5.5, 0, -5]}>
-        <Plant />
-      </group>
-
-      {/* Engineering Dept */}
-      <Workstation position={[-5.5, 0, 5]} screenColor="#10b981" />
-      <group position={[-5.5, 0, 5]}>
-        <Bookshelf />
-      </group>
-
-      {/* QA Dept */}
-      <Workstation position={[5.5, 0, 5]} screenColor="#f59e0b" />
-
-      {/* Server Room */}
-      <group position={[8.5, 0, 0]}>
-        <ServerRack />
-        <group position={[0.6, 0, 0]}>
-          <ServerRack />
-        </group>
-      </group>
-
-      {/* Meeting Room — round table placeholder */}
-      <mesh position={[0, 0.38, -7.5]} castShadow>
-        <cylinderGeometry args={[1, 1, 0.08, 16]} />
-        <meshStandardMaterial color="#312e81" roughness={0.4} />
+      <mesh
+        position={[deskPosition[0], 0.075, deskPosition[2] + 0.55]}
+        rotation={[-Math.PI / 2, 0, 0]}
+        onClick={(event) => { event.stopPropagation(); onSelect() }}
+        onPointerOver={() => { document.body.style.cursor = 'pointer' }}
+        onPointerOut={() => { document.body.style.cursor = 'default' }}
+      >
+        <planeGeometry args={[1.95, 1.95]} />
+        <meshBasicMaterial transparent opacity={0} depthWrite={false} />
       </mesh>
+      <Workstation
+        position={deskPosition}
+        screenColor={agent.avatar_color}
+        deskColor="#997658"
+        monitors={agent.status === 'working' ? 2 : 1}
+      />
+      <AgentCharacter
+        agent={agent}
+        position={characterPosition}
+        selected={selected}
+        onClick={onSelect}
+      />
+      {selected && (
+        <mesh position={[deskPosition[0], 0.078, deskPosition[2]]} rotation={[-Math.PI / 2, 0, 0]}>
+          <ringGeometry args={[1.02, 1.08, 36]} />
+          <meshBasicMaterial color={agent.avatar_color} transparent opacity={0.68} />
+        </mesh>
+      )}
+    </group>
+  )
+}
 
-      {/* Reception desk */}
-      <mesh position={[0, 0.38, 8]} castShadow>
-        <boxGeometry args={[2.5, 0.08, 0.6]} />
-        <meshStandardMaterial color="#2d3748" />
+function OfficeDetails() {
+  return (
+    <group>
+      {/* Management room: planning board, cabinet and welcoming greenery. */}
+      <Whiteboard position={[-12.45, 0.08, -8.15]} rotation={[0, Math.PI / 2, 0]} />
+      <FilingCabinet position={[-11.8, 0.08, -4.6]} />
+      <Plant position={[-6.1, 0.08, -9.1]} scale={1.05} />
+
+      {/* Research and design resource corners. */}
+      <Bookshelf position={[-2.75, 0.08, -9.15]} rotation={[0, Math.PI / 2, 0]} />
+      <Plant position={[3.1, 0.08, -9.1]} scale={0.92} />
+      <Plant position={[11.05, 0.08, -3.65]} scale={0.84} />
+
+      {/* Shared meeting room with seats around the central collaboration table. */}
+      <ConferenceTable position={[0, 0.08, 0.05]} size={[2.85, 1.25]} />
+      <ConferenceChair position={[-1.85, 0.08, 0.05]} rotation={[0, Math.PI / 2, 0]} />
+      <ConferenceChair position={[1.85, 0.08, 0.05]} rotation={[0, -Math.PI / 2, 0]} />
+      <ConferenceChair position={[0, 0.08, -1.03]} />
+      <ConferenceChair position={[0, 0.08, 1.08]} rotation={[0, Math.PI, 0]} />
+      <Sofa position={[-2.2, 0.08, 0.15]} rotation={[0, Math.PI / 2, 0]} color="#60766d" />
+
+      {/* DevOps equipment and the reception desk. */}
+      <ServerRack position={[11.35, 0.08, -0.35]} />
+      <ServerRack position={[12.35, 0.08, -0.35]} />
+      <FilingCabinet position={[10.65, 0.08, 1.65]} />
+      <Plant position={[-1.35, 0.08, 10.35]} scale={0.9} />
+      <mesh position={[0, 0.49, 10.05]} castShadow receiveShadow>
+        <boxGeometry args={[2.8, 0.12, 0.72]} />
+        <meshStandardMaterial color="#765544" roughness={0.55} />
+      </mesh>
+      <mesh position={[0, 0.27, 10.05]} castShadow>
+        <boxGeometry args={[2.5, 0.36, 0.58]} />
+        <meshStandardMaterial color="#4e4039" roughness={0.75} />
       </mesh>
     </group>
   )
 }
 
 export function OfficeScene() {
-  const { agents, departments, selectedAgentId, selectedDepartmentId, selectAgent, selectDepartment, loadAll } = useStore()
+  const {
+    agents,
+    departments,
+    selectedAgentId,
+    selectedDepartmentId,
+    selectAgent,
+    selectDepartment,
+  } = useStore()
 
-  useEffect(() => { loadAll() }, [loadAll])
+  const positionedAgents = useMemo(() => {
+    const perDepartment: Record<string, number> = {}
+    return agents.map((agent) => {
+      const index = perDepartment[agent.department_id] ?? 0
+      perDepartment[agent.department_id] = index + 1
+      const departmentIndex = departments.findIndex((department) => department.id === agent.department_id)
+      const layout = roomForAgent(agent, departments, departmentIndex)
+      const seat = agentSeat(agent, index, layout)
+      return { agent, ...seat }
+    })
+  }, [agents, departments])
 
   return (
     <Canvas
       shadows
-      camera={{ position: [12, 14, 12], fov: 45 }}
-      style={{ background: '#0f0f1a', width: '100%', height: '100%' }}
-      gl={{ antialias: true }}
+      dpr={[1, 1.5]}
+      camera={{ position: [23, 28, 30], fov: 39, near: 0.1, far: 120 }}
+      gl={{ antialias: true, powerPreference: 'high-performance' }}
+      onPointerMissed={() => { selectAgent(null); selectDepartment(null) }}
     >
       <OfficeLighting />
-      <Stars radius={80} depth={40} count={800} factor={3} fade />
-
-      {/* Office floor + zones */}
       <OfficeEnvironment
+        departments={departments}
         onSelectZone={selectDepartment}
         selectedZoneId={selectedDepartmentId}
       />
+      <OfficeDetails />
 
-      {/* Furniture */}
-      <OfficeFurniture />
-
-      {/* Zone labels */}
-      {departments.map((dept: Department) => (
+      {departments.map((department, index) => (
         <ZoneLabel
-          key={dept.id}
-          department={dept}
-          selected={selectedDepartmentId === dept.id}
-          onClick={() => selectDepartment(dept.id)}
+          key={department.id}
+          department={department}
+          index={index}
+          agentCount={agents.filter((agent) => agent.department_id === department.id).length}
+          selected={selectedDepartmentId === department.id}
+          onClick={() => selectDepartment(department.id)}
         />
       ))}
 
-      {/* Agent characters */}
-      {agents.map((agent) => {
-        const pos = AGENT_POSITIONS[agent.id] ?? [0, 0, 0]
-        return (
-          <AgentCharacter
-            key={agent.id}
-            agent={agent}
-            position={pos}
-            selected={selectedAgentId === agent.id}
-            onClick={() => selectAgent(agent.id)}
-          />
-        )
-      })}
+      {positionedAgents.map(({ agent, desk, character }) => (
+        <InteractiveStation
+          key={agent.id}
+          agent={agent}
+          deskPosition={desk}
+          characterPosition={character}
+          selected={selectedAgentId === agent.id}
+          onSelect={() => selectAgent(agent.id)}
+        />
+      ))}
 
-      {/* Isometric camera controls */}
       <OrbitControls
-        target={[0, 0, 0]}
-        minDistance={6}
-        maxDistance={28}
-        maxPolarAngle={Math.PI / 2.5}
-        minPolarAngle={Math.PI / 6}
-        enablePan
-        panSpeed={0.6}
-        rotateSpeed={0.5}
-        zoomSpeed={0.8}
+        makeDefault
+        target={[0, 0.35, -0.25]}
+        minDistance={21}
+        maxDistance={44}
+        minPolarAngle={0.48}
+        maxPolarAngle={1.18}
+        enableDamping
+        dampingFactor={0.08}
+        rotateSpeed={0.52}
+        zoomSpeed={0.78}
+        panSpeed={0.58}
+        screenSpacePanning
       />
     </Canvas>
   )
 }
-
